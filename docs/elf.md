@@ -76,7 +76,11 @@ typedef struct
 | ---- | ---- | ---- |
 | e_ident | ELF인지 판별 + 기본 정보 | 매직넘버(0~3), 32bit/64bit(4), 엔디안(5), ELF 버전(6) |
 | e_entry | 프로그램 시작 주소 | |
-| e_phoff | Program
+| e_phoff | Program Header 시작 위치 (offset) | |
+| e_shoff | Section Header 시작 위치 (offset) | |
+| e_phnum | | |
+| e_shnum | | |
+| e_shstrndx | | |
 
 
 ### 2.2 Program Header
