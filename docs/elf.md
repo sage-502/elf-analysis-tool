@@ -116,7 +116,7 @@ typedef struct
 
 ### 2.3 Section Header
 
-### 구조체
+#### 구조체
 
 ``` c
 typedef struct
@@ -151,11 +151,93 @@ typedef struct
 
 ### 2.4 Section Data
 
+Section Data는 각 Section에 해당하는 실제 데이터가 저장된 영역이다.
 
+Section Header에서 정의된 sh_offset과 sh_size를 통해 접근할 수 있다. </br>
+코드, 변수, 문자열 등 프로그램의 실제 내용이 포함된다.
+
+대표적인 Section은 다음과 같다.
+
+| Section   | 의미                    |
+| --------- | --------------------- |
+| `.text`   | 실행 코드                 |
+| `.data`   | 초기화된 전역 변수            |
+| `.bss`    | 초기화되지 않은 변수 (파일에는 없음) |
+| `.rodata` | 읽기 전용 데이터             |
+| `.symtab` | 심볼 테이블                |
+| `.strtab` | 문자열 테이블               |
 
 ---
 
-## References
+## 3. 예시 
+
+짧은 소스코드를 컴파일한 뒤, readelf 결과와 실제 raw byte를 매핑시켜 본다.
+
+#### 소스코드
+
+``` c
+#include <stdio.h>
+
+int main() {
+    printf("Hello, world!\n");
+    return 0;
+}
+```
+
+#### 컴파일 옵션
+```
+gcc -O0 -fno-pie -no-pie hello.c -o hello
+```
+
+### 3.1 ELF Header
+
+```
+$ hexdump -C hello | head
+00000000  7f 45 4c 46 02 01 01 00  00 00 00 00 00 00 00 00  |.ELF............|
+00000010  02 00 3e 00 01 00 00 00  50 10 40 00 00 00 00 00  |..>.....P.@.....|
+00000020  40 00 00 00 00 00 00 00  38 36 00 00 00 00 00 00  |@.......86......|
+00000030  00 00 00 00 40 00 38 00  0d 00 40 00 1f 00 1e 00  |....@.8...@.....|
+00000040  06 00 00 00 04 00 00 00  40 00 00 00 00 00 00 00  |........@.......|
+00000050  40 00 40 00 00 00 00 00  40 00 40 00 00 00 00 00  |@.@.....@.@.....|
+00000060  d8 02 00 00 00 00 00 00  d8 02 00 00 00 00 00 00  |................|
+00000070  08 00 00 00 00 00 00 00  03 00 00 00 04 00 00 00  |................|
+00000080  18 03 00 00 00 00 00 00  18 03 40 00 00 00 00 00  |..........@.....|
+00000090  18 03 40 00 00 00 00 00  1c 00 00 00 00 00 00 00  |..@.............|
+```
+
+#### e_ident (0x00 ~ 0x0f)
+```
+00000000  7f 45 4c 46 02 01 01 00  00 00 00 00 00 00 00 00  |.ELF............|
+```
+
+* `7f 45 4c 46` : ELF magic
+* 02 : 64bit
+* 01 : little endian
+* 01 : ELF version
+
+#### e_type (0x10 ~ 0x11)
+```
+00000010  02 00 3e 00 01 00 00 00  50 10 40 00 00 00 00 00  |..>.....P.@.....|
+```
+
+* `02 00` → little endian `0x0002` : ET_EXEC (실행파일)
+
+	Elf64_Half	e_machine;
+	Elf64_Word	e_version;
+	Elf64_Addr	e_entry;
+	Elf64_Off	e_phoff;
+	Elf64_Off	e_shoff;
+	Elf64_Word	e_flags;
+	Elf64_Half	e_ehsize;
+	Elf64_Half	e_phentsize;
+	Elf64_Half	e_phnum;
+	Elf64_Half	e_shentsize;
+	Elf64_Half	e_shnum;
+	Elf64_Half	e_shstrndx;
+
+---
+
+## 4. References
 
 - GNU C Library (glibc), elf.h
   https://www.gnu.org/software/libc/
