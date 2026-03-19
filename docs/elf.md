@@ -539,7 +539,7 @@ $ hexdump -C -s 0x35ba -n 0x10 hello
 
 ---
 
-## 4. References
+## 5. References
 
 * GNU C Library (glibc), elf.h
 * https://www.gnu.org/software/libc/
