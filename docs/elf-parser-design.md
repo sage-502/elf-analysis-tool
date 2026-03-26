@@ -295,5 +295,3 @@ analyze_symbols(&elf);
 * Symbol Table 파싱
 * Relocation 분석
 * DWARF 정보 처리
-
-까지 이어서 만들어줄게 😎
