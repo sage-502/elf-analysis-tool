@@ -3,80 +3,93 @@
 #include <elf.h>
 #include "vuln.h"
 
+/*
+ * 탐지할 위험 함수 목록
+ * (버퍼 오버플로우 등 취약점 유발 가능)
+ */
 static char *dangerous_funcs[] = {
     "gets",
     "strcpy",
     "strcat",
     "sprintf",
     "scanf",
+    "sscanf",
+    "fscanf",
     NULL
 };
 
-// 함수 찾기: 주소 → 함수 이름
-static const char *find_function_by_addr(elf_t *elf, uint64_t addr)
+/*
+ * 특정 symbol table(.symtab 또는 .dynsym)을 분석하여
+ * 취약 함수가 포함되어 있는지 확인하는 함수
+ */
+static void analyze_symtab(elf_t *elf, Elf64_Shdr *shdr)
 {
-    for (int i = 0; i < elf->shnum; i++) {
-        Elf64_Shdr sh = elf->shdrs[i];
+    Elf64_Sym *symtab;   // symbol table 시작 주소
+    char *strtab;        // string table (함수 이름 저장)
+    int count;           // symbol 개수
 
-        if (sh.sh_type != SHT_SYMTAB && sh.sh_type != SHT_DYNSYM)
+    /* symbol table 위치 계산 */
+    symtab = (Elf64_Sym *)(elf->data + shdr->sh_offset);
+
+    /* symbol 개수 계산 */
+    count = shdr->sh_size / sizeof(Elf64_Sym);
+
+    /* 해당 symbol table과 연결된 string table 가져오기 */
+    Elf64_Shdr str_shdr = elf->shdrs[shdr->sh_link];
+    strtab = (char *)(elf->data + str_shdr.sh_offset);
+
+    /* 모든 symbol 순회 */
+    for (int i = 0; i < count; i++) {
+        Elf64_Sym sym = symtab[i];
+
+        /* 함수 타입(symbol type == STT_FUNC)만 분석 */
+        if (ELF64_ST_TYPE(sym.st_info) != STT_FUNC)
             continue;
 
-        Elf64_Sym *symtab = (Elf64_Sym *)(elf->data + sh.sh_offset);
-        int count = sh.sh_size / sizeof(Elf64_Sym);
+        /* 함수 이름 가져오기 */
+        char *name = strtab + sym.st_name;
 
-        Elf64_Shdr str_shdr = elf->shdrs[sh.sh_link];
-        char *strtab = (char *)(elf->data + str_shdr.sh_offset);
+        /* 유효하지 않은 이름은 건너뜀 */
+        if (!name || name[0] == '\0')
+            continue;
 
-        for (int j = 0; j < count; j++) {
-            Elf64_Sym sym = symtab[j];
-
-            if (ELF64_ST_TYPE(sym.st_info) != STT_FUNC)
-                continue;
-
-            if (addr >= sym.st_value && addr < sym.st_value + sym.st_size) {
-                return strtab + sym.st_name;
+        /* 위험 함수 목록과 비교 */
+        for (int j = 0; dangerous_funcs[j]; j++) {
+            if (strcmp(name, dangerous_funcs[j]) == 0) {
+                printf("[!] Vulnerable function detected: %s\n", name);
             }
         }
     }
-    return "unknown";
 }
 
+/*
+ * ELF 전체에서 취약 함수 탐지를 수행하는 메인 함수
+ */
 void analyze_vuln(elf_t *elf)
 {
-    printf("[*] Finding vulnerable function calls...\n");
+    printf("[*] Scanning for vulnerable functions...\n");
 
+    int has_symtab = 0;
+
+    /* 모든 section header 순회 */
     for (int i = 0; i < elf->shnum; i++) {
-        Elf64_Shdr sh = elf->shdrs[i];
+        char *secname = elf->shstrtab + elf->shdrs[i].sh_name;
 
-        // relocation section만 처리
-        if (sh.sh_type != SHT_RELA && sh.sh_type != SHT_REL)
-            continue;
+        /*
+         * symbol table section 탐색
+         * - .symtab : 정적 심볼 테이블
+         * - .dynsym : 동적 심볼 테이블
+         */
+        if (strcmp(secname, ".symtab") == 0 ||
+            strcmp(secname, ".dynsym") == 0) {
 
-        // 연결된 symbol table
-        Elf64_Shdr sym_sh = elf->shdrs[sh.sh_link];
-        Elf64_Sym *symtab = (Elf64_Sym *)(elf->data + sym_sh.sh_offset);
-
-        Elf64_Shdr str_sh = elf->shdrs[sym_sh.sh_link];
-        char *strtab = (char *)(elf->data + str_sh.sh_offset);
-
-        int count = sh.sh_size / sh.sh_entsize;
-
-        for (int j = 0; j < count; j++) {
-            Elf64_Rela *rela = (Elf64_Rela *)(elf->data + sh.sh_offset + j * sizeof(Elf64_Rela));
-
-            int sym_idx = ELF64_R_SYM(rela->r_info);
-            char *func_name = strtab + symtab[sym_idx].st_name;
-
-            // 위험 함수인지 검사
-            for (int k = 0; dangerous_funcs[k]; k++) {
-                if (strcmp(func_name, dangerous_funcs[k]) == 0) {
-
-                    // 호출한 함수 찾기
-                    const char *caller = find_function_by_addr(elf, rela->r_offset);
-
-                    printf("[!] %s called in function: %s\n", func_name, caller);
-                }
-            }
+            analyze_symtab(elf, &elf->shdrs[i]);
+            has_symtab = 1;
         }
+    }
+
+    /* symbol table이 없는 경우 */
+    if (!has_symtab) {
+        printf("[-] No symbol table found\n");
     }
 }
