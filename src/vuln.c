@@ -2,94 +2,148 @@
 #include <string.h>
 #include <elf.h>
 #include "vuln.h"
+#include "elf_parser.h"
 
-/*
- * 탐지할 위험 함수 목록
- * (버퍼 오버플로우 등 취약점 유발 가능)
- */
-static char *dangerous_funcs[] = {
-    "gets",
-    "strcpy",
-    "strcat",
-    "sprintf",
-    "scanf",
-    "sscanf",
-    "fscanf",
-    NULL
+typedef struct s_danger_func
+{
+    const char *name;
+    const char *category;
+    const char *severity;
+} danger_func_t;
+
+static const danger_func_t g_danger_funcs[] = {
+    {"gets",     "buffer overflow", "HIGH"},
+    {"strcpy",   "buffer overflow", "HIGH"},
+    {"strcat",   "buffer overflow", "HIGH"},
+    {"sprintf",  "buffer overflow", "HIGH"},
+    {"vsprintf", "buffer overflow", "HIGH"},
+    {"scanf",    "input handling",  "MEDIUM"},
+    {"fscanf",   "input handling",  "MEDIUM"},
+    {"sscanf",   "input handling",  "MEDIUM"},
+    {"memcpy",   "memory copy",     "MEDIUM"},
+    {"read",     "raw input",       "MEDIUM"},
+    {"recv",     "network input",   "MEDIUM"},
+    {"system",   "command exec",    "HIGH"},
+    {"popen",    "command exec",    "HIGH"},
+    {NULL,       NULL,              NULL}
 };
 
-/*
- * 특정 symbol table(.symtab 또는 .dynsym)을 분석하여
- * 취약 함수가 포함되어 있는지 확인하는 함수
- */
-static void analyze_symtab(elf_t *elf, Elf64_Shdr *shdr)
+static Elf64_Shdr *find_section_by_name(elf_t *elf, const char *name)
 {
-    Elf64_Sym *symtab;   // symbol table 시작 주소
-    char *strtab;        // string table (함수 이름 저장)
-    int count;           // symbol 개수
+    int i;
+    const char *secname;
 
-    /* symbol table 위치 계산 */
-    symtab = (Elf64_Sym *)(elf->data + shdr->sh_offset);
+    if (!elf || !name || !elf->shdrs || !elf->shstrtab)
+        return NULL;
 
-    /* symbol 개수 계산 */
-    count = shdr->sh_size / sizeof(Elf64_Sym);
+    for (i = 0; i < elf->shnum; i++)
+    {
+        secname = elf->shstrtab + elf->shdrs[i].sh_name;
+        if (strcmp(secname, name) == 0)
+            return &elf->shdrs[i];
+    }
+    return NULL;
+}
 
-    /* 해당 symbol table과 연결된 string table 가져오기 */
-    Elf64_Shdr str_shdr = elf->shdrs[shdr->sh_link];
-    strtab = (char *)(elf->data + str_shdr.sh_offset);
+static const danger_func_t *find_danger_func(const char *name)
+{
+    int i;
 
-    /* 모든 symbol 순회 */
-    for (int i = 0; i < count; i++) {
-        Elf64_Sym sym = symtab[i];
+    if (!name)
+        return NULL;
 
-        /* 함수 타입(symbol type == STT_FUNC)만 분석 */
-        if (ELF64_ST_TYPE(sym.st_info) != STT_FUNC)
+    for (i = 0; g_danger_funcs[i].name != NULL; i++)
+    {
+        if (strcmp(g_danger_funcs[i].name, name) == 0)
+            return &g_danger_funcs[i];
+    }
+    return NULL;
+}
+
+static void add_hit(vuln_t *result, const danger_func_t *danger)
+{
+    int idx;
+
+    if (!result || !danger || result->count >= 128)
+        return;
+
+    idx = result->count;
+
+    strncpy(result->hits[idx].name, danger->name, sizeof(result->hits[idx].name) - 1);
+    strncpy(result->hits[idx].category, danger->category, sizeof(result->hits[idx].category) - 1);
+    strncpy(result->hits[idx].severity, danger->severity, sizeof(result->hits[idx].severity) - 1);
+
+    result->hits[idx].name[sizeof(result->hits[idx].name) - 1] = '\0';
+    result->hits[idx].category[sizeof(result->hits[idx].category) - 1] = '\0';
+    result->hits[idx].severity[sizeof(result->hits[idx].severity) - 1] = '\0';
+
+    result->count++;
+}
+
+static void scan_symbol_table(elf_t *elf, const char *symsec_name, const char *strsec_name, vuln_t *result)
+{
+    Elf64_Shdr *sym_sh;
+    Elf64_Shdr *str_sh;
+    Elf64_Sym *symbols;
+    const char *strtab;
+    int sym_count;
+    int i;
+
+    sym_sh = find_section_by_name(elf, symsec_name);
+    str_sh = find_section_by_name(elf, strsec_name);
+
+    if (!sym_sh || !str_sh || sym_sh->sh_entsize == 0)
+        return;
+
+    symbols = (Elf64_Sym *)(elf->data + sym_sh->sh_offset);
+    strtab = (const char *)(elf->data + str_sh->sh_offset);
+    sym_count = (int)(sym_sh->sh_size / sym_sh->sh_entsize);
+
+    for (i = 0; i < sym_count; i++)
+    {
+        const char *sym_name;
+        const danger_func_t *danger;
+
+        if (symbols[i].st_name == 0)
             continue;
 
-        /* 함수 이름 가져오기 */
-        char *name = strtab + sym.st_name;
-
-        /* 유효하지 않은 이름은 건너뜀 */
-        if (!name || name[0] == '\0')
+        sym_name = strtab + symbols[i].st_name;
+        if (!sym_name || sym_name[0] == '\0')
             continue;
 
-        /* 위험 함수 목록과 비교 */
-        for (int j = 0; dangerous_funcs[j]; j++) {
-            if (strcmp(name, dangerous_funcs[j]) == 0) {
-                printf("[!] Vulnerable function detected: %s\n", name);
-            }
-        }
+        danger = find_danger_func(sym_name);
+        if (danger)
+            add_hit(result, danger);
     }
 }
 
-/*
- * ELF 전체에서 취약 함수 탐지를 수행하는 메인 함수
- */
-void analyze_vuln(elf_t *elf)
+vuln_t analyze_vulnerability(elf_t *elf)
 {
-    printf("[*] Scanning for vulnerable functions...\n");
+    vuln_t result;
 
-    int has_symtab = 0;
+    memset(&result, 0, sizeof(result));
+    if (!elf)
+        return result;
 
-    /* 모든 section header 순회 */
-    for (int i = 0; i < elf->shnum; i++) {
-        char *secname = elf->shstrtab + elf->shdrs[i].sh_name;
+    scan_symbol_table(elf, ".dynsym", ".dynstr", &result);
+    scan_symbol_table(elf, ".symtab", ".strtab", &result);
 
-        /*
-         * symbol table section 탐색
-         * - .symtab : 정적 심볼 테이블
-         * - .dynsym : 동적 심볼 테이블
-         */
-        if (strcmp(secname, ".symtab") == 0 ||
-            strcmp(secname, ".dynsym") == 0) {
+    return result;
+}
 
-            analyze_symtab(elf, &elf->shdrs[i]);
-            has_symtab = 1;
-        }
-    }
+void print_vuln(vuln_t v)
+{
+    int i;
 
-    /* symbol table이 없는 경우 */
-    if (!has_symtab) {
-        printf("[-] No symbol table found\n");
+    printf("===== Vulnerability Scan Result =====\n");
+    printf("count: %d\n", v.count);
+
+    for (i = 0; i < v.count; i++)
+    {
+        printf("[%d] name=%s | category=%s | severity=%s\n",
+               i + 1,
+               v.hits[i].name,
+               v.hits[i].category,
+               v.hits[i].severity);
     }
 }
