@@ -15,6 +15,7 @@ int main(int argc, char **argv)
     vuln_t v = analyze_vulnerability(elf);
 
     print_vuln(v);
+    print_mitigation(m);
 
     free_elf(elf);
 
