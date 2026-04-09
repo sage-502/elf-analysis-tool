@@ -85,11 +85,24 @@ static int check_relro(elf_t *elf)
         if (dyn[i].d_tag == DT_NULL)
             break;
 
+        /* ✔ 케이스 1: DT_BIND_NOW */
         if (dyn[i].d_tag == DT_BIND_NOW)
-        {
             bind_now = 1;
-            break;
+
+        /* ✔ 케이스 2: DT_FLAGS- add */
+        if (dyn[i].d_tag == DT_FLAGS)
+        {
+            if (dyn[i].d_un.d_val & DF_BIND_NOW)
+                bind_now = 1;
         }
+
+        /* ✔ 케이스 3: DT_FLAGS_1- add */
+        if (dyn[i].d_tag == DT_FLAGS_1)
+        {
+            if (dyn[i].d_un.d_val & DF_1_NOW)
+                bind_now = 1;
+        }
+       
     }
 
     if (bind_now)
